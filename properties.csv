@@ -1,0 +1,5 @@
+ID,City,Price,BHK,Type,Address,ImageURL
+1,Delhi,4800000,2,Apartment,Connaught Place,"https://example.com/apt1.jpg"
+2,Delhi,5200000,2,Condo,Saket,"https://example.com/apt2.jpg"
+3,Mumbai,7500000,3,Apartment,Bandra,"https://example.com/apt3.jpg"
+4,Delhi,4500000,1,Studio,Lajpat Nagar,"https://example.com/apt4.jpg"
