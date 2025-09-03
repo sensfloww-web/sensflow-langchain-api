@@ -10,19 +10,25 @@ def process_lead(data: dict = Body(...)):
     if not lead_text:
         return {"error": "No lead_text provided"}
 
-    # Step 1: Parse the lead
-    lead = parse_lead(lead_text)
+    try:
+        # Step 1: Parse the lead
+        lead = parse_lead(lead_text)
 
-    # Step 2: Load property sheet
-    df = load_properties("Properties")
+        # Step 2: Load property sheet (by Spreadsheet ID + tab index)
+        spreadsheet_id = "1Ys5q3g-6fWZK5U2h_tSMVL-ELNqZrIJYI8orJcP6dGE"  # Your sheet ID
+        worksheet_index = 3  # Properties tab (0=BuyLead, 1=SellLead, 2=RentLead, 3=Properties)
+        df = load_properties(spreadsheet_id, worksheet_index)
 
-    # Step 3: Match properties
-    results = match_property(lead, df)
+        # Step 3: Match properties
+        results = match_property(lead, df)
 
-    # Step 4: Generate JSON reply
-    reply = generate_json_reply(lead, results)
+        # Step 4: Generate JSON reply
+        reply = generate_json_reply(lead, results)
 
-    return reply
+        return reply
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    except Exception as e:
+        return {"error": str(e)}
+
+app = FastAPI()
+

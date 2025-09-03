@@ -47,20 +47,41 @@ def parse_lead(lead_text: str):
     return parser.parse(output.content)
 
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+import os
+import json
+import gspread
 import pandas as pd
+from oauth2client.service_account import ServiceAccountCredentials
 
-def load_properties(sheet_name="Properties"):
-    """Load property data from Google Sheet into a Pandas DataFrame"""
+def load_properties(spreadsheet_id, worksheet_index=0):
+    """
+    Load property data from Google Sheet into a Pandas DataFrame.
+    
+    Args:
+        spreadsheet_id (str): Google Spreadsheet ID (from the sheet URL).
+        worksheet_index (int): Tab index (0 = BuyLead, 1 = SellLead, 2 = RentLead, 3 = Properties).
+    """
+
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+
+    # ✅ Load Google service account JSON from environment variable
+    creds_json = os.getenv("GOOGLE_CREDENTIALS")
+    if not creds_json:
+        raise ValueError("Google credentials not found in environment variables")
+
+    creds_dict = json.loads(creds_json)  
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+
+    # ✅ Authorize with Google Sheets
     client = gspread.authorize(creds)
 
-    # Use your actual sheet title here 👇
-    sheet = client.open("automation").worksheet(sheet_name)
+    # ✅ Open sheet by ID instead of name
+    sheet = client.open_by_key(spreadsheet_id).get_worksheet(worksheet_index)
+
+    # ✅ Convert rows into DataFrame
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
 
@@ -79,7 +100,8 @@ def load_properties(sheet_name="Properties"):
             except:
                 return 0
 
-    df["Price"] = df["Price"].apply(parse_price)
+    if "Price" in df.columns:
+        df["Price"] = df["Price"].apply(parse_price)
 
     # ✅ Optional: Clean BHK column too ("2BHK" → 2)
     def parse_bhk(val):
@@ -89,7 +111,8 @@ def load_properties(sheet_name="Properties"):
         except:
             return 0
 
-    df["BHK"] = df["BHK"].apply(parse_bhk)
+    if "BHK" in df.columns:
+        df["BHK"] = df["BHK"].apply(parse_bhk)
 
     return df
 
@@ -221,8 +244,23 @@ if __name__ == "__main__":
     lead = parse_lead(text)
     print("Parsed Lead:", lead)
 
-    # Step 2: Load property sheet
-    df = load_properties("Properties")
+    # Step 2: Decide which worksheet to load based on lead intent
+    spreadsheet_id = "1Ys5q3g-6fWZK5U2h_tSMVL-ELNqZrIJYI8orJcP6dGE"  # Your sheet ID
+
+    # Default = Properties tab
+    worksheet_index = 3  
+
+    if "buy" in text.lower():
+        worksheet_index = 0  # BuyLead
+    elif "sell" in text.lower():
+        worksheet_index = 1  # SellLead
+    elif "rent" in text.lower():
+        worksheet_index = 2  # RentLead
+
+    print(f"Loading worksheet index: {worksheet_index}")
+
+    # Load the correct sheet tab
+    df = load_properties(spreadsheet_id, worksheet_index)
     print("Loaded Properties:", df.head())
 
     # Step 3: Run matching
