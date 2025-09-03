@@ -30,5 +30,3 @@ def process_lead(data: dict = Body(...)):
     except Exception as e:
         return {"error": str(e)}
 
-app = FastAPI()
-
