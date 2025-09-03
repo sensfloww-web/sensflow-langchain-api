@@ -217,6 +217,7 @@ def generate_json_reply(lead: dict, results: dict):
     """
     reply = {
         "lead_email": lead.get("email", ""),
+        "intent": lead.get("intent", ""),   # 👈 add this line
         "note": results["note"],
         "matches": []
     }
@@ -235,6 +236,7 @@ def generate_json_reply(lead: dict, results: dict):
         })
 
     return reply
+
 
 if __name__ == "__main__":
     # Example lead email text
