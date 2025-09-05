@@ -237,6 +237,118 @@ def generate_json_reply(lead: dict, results: dict):
 
     return reply
 
+# ---------------- NEW FUNCTIONS ----------------
+
+import json
+from datetime import datetime
+from langchain_openai import ChatOpenAI
+from langchain.output_parsers import StructuredOutputParser, ResponseSchema
+
+def _create_llm():
+    """Helper to create an OpenAI Chat model with your API key."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY not set in environment")
+    return ChatOpenAI(model="gpt-4o-mini", temperature=0.2, openai_api_key=api_key)
+
+# ---------- Dynamic Follow-up Generator ----------
+_followup_schemas = [
+    ResponseSchema(name="subject", description="Short email subject"),
+    ResponseSchema(name="html_body", description="HTML body for the follow-up email"),
+    ResponseSchema(name="plain_body", description="Plain text fallback body"),
+    ResponseSchema(name="tone", description="Tone used, e.g. casual/formal"),
+]
+_followup_parser = StructuredOutputParser.from_response_schemas(_followup_schemas)
+
+FOLLOWUP_PROMPT = """
+You are a helpful UK real-estate assistant writing follow-up emails.
+Inputs:
+- lead: {lead_json}
+- match results: {results_json}
+- followup_stage: {stage}   # 0=FU#1, 1=FU#2, 2=FU#3
+- tone: {tone}              # "casual" or "formal"
+- previous_messages: {prev_messages}  # bodies of emails already sent
+
+Write a new follow-up email that is not repetitive.
+{format_instructions}
+"""
+
+def generate_followup_email(lead: dict, results: dict, stage: int = 0, tone: str = "casual", prev_messages: list = None):
+    """Generate a personalized follow-up email using LLM."""
+    if prev_messages is None:
+        prev_messages = []
+
+    llm = _create_llm()
+    prompt = FOLLOWUP_PROMPT.format(
+        lead_json=json.dumps(lead, default=str),
+        results_json=json.dumps(results, default=str),
+        stage=stage,
+        tone=tone,
+        prev_messages=json.dumps(prev_messages),
+        format_instructions=_followup_parser.get_format_instructions()
+    )
+    out = llm.invoke(prompt)
+    parsed = _followup_parser.parse(out.content)
+
+    return {
+        "subject": parsed.get("subject", f"Properties in {lead.get('city','your area')}"),
+        "html_body": parsed.get("html_body", ""),
+        "plain_body": parsed.get("plain_body", ""),
+        "tone": parsed.get("tone", tone)
+    }
+
+# ---------- Reply Understanding ----------
+_reply_schemas = [
+    ResponseSchema(name="action", description="One of: stop, interested, schedule_call, request_info, other"),
+    ResponseSchema(name="reason", description="One-line reason"),
+    ResponseSchema(name="next_followup_at", description="ISO datetime if user asked to schedule, else empty"),
+    ResponseSchema(name="unsubscribe", description="'yes' if user asked to unsubscribe, else 'no'"),
+    ResponseSchema(name="reply_text", description="Suggested short reply text (plain), or empty")
+]
+_reply_parser = StructuredOutputParser.from_response_schemas(_reply_schemas)
+
+REPLY_PROMPT = """
+You are an email assistant. Classify this reply.
+
+Reply:
+{reply_text}
+
+Return JSON:
+{format_instructions}
+"""
+
+def analyze_reply_text(reply_text: str):
+    """Classify and extract actions from an inbound reply."""
+    llm = _create_llm()
+    prompt = REPLY_PROMPT.format(
+        reply_text=reply_text,
+        format_instructions=_reply_parser.get_format_instructions()
+    )
+    out = llm.invoke(prompt)
+    parsed = _reply_parser.parse(out.content)
+
+    # Normalize values
+    action = parsed.get("action","other").lower()
+    if action not in ("stop","interested","schedule_call","request_info","other"):
+        action = "other"
+
+    nfa = parsed.get("next_followup_at","").strip()
+    try:
+        if nfa:
+            datetime.fromisoformat(nfa)  # validate ISO
+        else:
+            nfa = ""
+    except:
+        nfa = ""
+
+    return {
+        "action": action,
+        "reason": parsed.get("reason",""),
+        "next_followup_at": nfa,
+        "unsubscribe": "yes" if parsed.get("unsubscribe","no").lower()=="yes" else "no",
+        "reply_text": parsed.get("reply_text","")
+    }
+# ---------------- END NEW FUNCTIONS ----------------
 
 if __name__ == "__main__":
     # Example lead email text
