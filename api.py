@@ -1,13 +1,21 @@
 from fastapi import FastAPI, Body
 import uvicorn
-from sensflow_ai import parse_lead, load_properties, match_property, generate_json_reply
+from sensflow_ai import (
+    parse_lead,
+    load_properties,
+    match_property,
+    generate_json_reply,
+    generate_followup_email,
+    analyze_reply_text
+)
 
 app = FastAPI()
 
+# ---------------- process lead ----------------
 @app.post("/process-lead")
 def process_lead(data: dict = Body(...)):
     lead_text = data.get("lead_text", "")
-    lead_email = data.get("email", "")   # ✅ capture email from request
+    lead_email = data.get("email", "")
 
     if not lead_text:
         return {"error": "No lead_text provided"}
@@ -15,44 +23,11 @@ def process_lead(data: dict = Body(...)):
     try:
         # Step 1: Parse the lead
         lead = parse_lead(lead_text)
-        if lead_email:   # attach email if provided
+        if lead_email:
             lead["email"] = lead_email
 
         # Step 2: Load property sheet (by Spreadsheet ID + tab index)
         spreadsheet_id = "1Ys5q3g-6fWZK5U2h_tSMVL-ELNqZrIJYI8orJcP6dGE"  # Your sheet ID
-        worksheet_index = 3  # Properties tab
-        df = load_properties(spreadsheet_id, worksheet_index)
-
-        # Step 3: Match properties
-        results = match_property(lead, df)
-
-        # Step 4: Generate JSON reply
-        reply = generate_json_reply(lead, results)
-
-        # ✅ Add intent + email explicitly to response
-        reply["intent"] = lead.get("intent", "")
-        reply["lead_email"] = lead.get("email", "")
-
-        return reply
-
-    except Exception as e:
-        return {"error": str(e)}
-@app.post("/process-lead")
-def process_lead(data: dict = Body(...)):
-    lead_text = data.get("lead_text", "")
-    lead_email = data.get("email", "")   # ✅ capture email from request
-
-    if not lead_text:
-        return {"error": "No lead_text provided"}
-
-    try:
-        # Step 1: Parse the lead
-        lead = parse_lead(lead_text)
-        if lead_email:   # attach email if provided
-            lead["email"] = lead_email
-
-        # Step 2: Load property sheet (by Spreadsheet ID + tab index)
-        spreadsheet_id = "1Ys5q3g-6fWZK5U2h_tSMVL-ELNqZrIJYI8orJcP6dGE"
         worksheet_index = 3
         df = load_properties(spreadsheet_id, worksheet_index)
 
@@ -62,7 +37,7 @@ def process_lead(data: dict = Body(...)):
         # Step 4: Generate JSON reply
         reply = generate_json_reply(lead, results)
 
-        # ✅ Add intent + email explicitly to response
+        # Add intent + email explicitly to response
         reply["intent"] = lead.get("intent", "")
         reply["lead_email"] = lead.get("email", "")
 
@@ -71,12 +46,67 @@ def process_lead(data: dict = Body(...)):
     except Exception as e:
         return {"error": str(e)}
 
-# 👇👇 paste new endpoints AFTER this line 👇👇
-
+# ---------------- generate follow-up ----------------
 @app.post("/generate-followup")
 def generate_followup_endpoint(data: dict = Body(...)):
-    ...
+    """
+    Expects JSON:
+      {
+        "lead": { ... },
+        "results": { ... },
+        "stage": 0,
+        "tone": "casual",
+        "prev_messages": []
+      }
+    Returns:
+      { subject, html_body, plain_body, tone }
+    """
+    lead = data.get("lead", {})
+    results = data.get("results", {})
+    stage = int(data.get("stage", 0))
+    tone = data.get("tone", "casual")
+    prev_messages = data.get("prev_messages", [])
 
+    try:
+        out = generate_followup_email(lead, results, stage=stage, tone=tone, prev_messages=prev_messages)
+        return out
+    except Exception as e:
+        return {"error": str(e)}
+
+# ---------------- analyze reply ----------------
 @app.post("/analyze-reply")
 def analyze_reply_endpoint(data: dict = Body(...)):
-    ...
+    """
+    Debugging wrapper for analyze_reply_text that logs the result before returning.
+    Expects: { "reply_text": "..." }
+    """
+    reply_text = data.get("reply_text", "")
+    if not reply_text:
+        return {"error": "reply_text required"}
+    try:
+        result = analyze_reply_text(reply_text)
+
+        if result is None:
+            print("DEBUG /analyze-reply: analyzer returned None")
+            return {"error": "analyzer returned None"}
+        if not isinstance(result, dict):
+            print("DEBUG /analyze-reply: analyzer returned non-dict:", repr(result))
+            try:
+                return dict(result)
+            except Exception:
+                return {"error": "analyzer returned unexpected type", "raw": str(result)}
+
+        print("DEBUG /analyze-reply result:", result)
+
+        safe_result = {
+            "action": result.get("action", "other"),
+            "reason": result.get("reason", ""),
+            "next_followup_at": result.get("next_followup_at", ""),
+            "unsubscribe": result.get("unsubscribe", "no"),
+            "reply_text": result.get("reply_text", "")
+        }
+        return safe_result
+
+    except Exception as e:
+        print("ERROR /analyze-reply exception:", str(e))
+        return {"error": str(e)}
