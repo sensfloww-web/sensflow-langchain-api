@@ -74,85 +74,23 @@ def generate_followup_endpoint(data: dict = Body(...)):
         return {"error": str(e)}
 
 # ---------------- analyze reply ----------------
-from fastapi import Header, HTTPException, status
-from typing import Optional
-import datetime, re
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException, status
 
-API_KEY = "changeme-please-set-a-secret"  # move to env var in production
-
-def mask_pii(text: str) -> str:
-    text = re.sub(r'[\w\.-]+@[\w\.-]+', '[email]', text)
-    text = re.sub(r'\+?\d[\d\s\-\(\)]{6,}\d', '[phone]', text)
-    return text
+bearer_scheme = HTTPBearer()
+API_KEY = "changeme-please-set-a-secret"  # move to env
 
 @app.post("/analyze-reply")
 async def analyze_reply_endpoint(
     data: dict = Body(...),
-    authorization: Optional[str] = Header(None)
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ):
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing auth")
-    key = authorization.split(" ", 1)[1]
-    if key != API_KEY:
+    token = credentials.credentials
+    if token != API_KEY:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
     reply_text = (data.get("reply_text") or "").strip()
     if not reply_text:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="reply_text required")
 
-    try:
-        masked = mask_pii(reply_text)
-        result = analyze_reply_text(masked)
-
-        if not result or not isinstance(result, dict):
-            raise Exception("analyzer returned unexpected type")
-
-        intent = result.get("intent") or result.get("action") or "ambiguous"
-        confidence = float(result.get("confidence", 0.0))
-        unsubscribe = bool(result.get("unsubscribe") or False)
-        entities = result.get("entities", {}) or {}
-
-        nf = result.get("next_followup_at")
-        next_followup_at = None
-        if nf:
-            try:
-                dt = datetime.datetime.fromisoformat(nf)
-                next_followup_at = dt.isoformat()
-            except Exception:
-                next_followup_at = str(nf)
-
-        if confidence < 0.6:
-            intent = "ambiguous"
-
-        return {
-            "intent": intent,
-            "confidence": confidence,
-            "unsubscribe": unsubscribe,
-            "entities": entities,
-            "next_followup_at": next_followup_at or "",
-            "reply_text": reply_text
-        }
-
-    except Exception as e:
-        print("ERROR /analyze-reply:", str(e))
-        raise HTTPException(status_code=500, detail="internal analyzer error")
-from fastapi.security import HTTPBearer
-from fastapi import Depends
-
-bearer_scheme = HTTPBearer()
-
-@app.post("/analyze-reply")
-async def analyze_reply_endpoint(
-    data: dict = Body(...),
-    credentials: str = Depends(bearer_scheme)
-):
-    # Extract token
-    token = credentials.credentials
-    if token != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
-    reply_text = (data.get("reply_text") or "").strip()
-    if not reply_text:
-        raise HTTPException(status_code=400, detail="reply_text required")
-
-    # ... same analyzer logic ...
+    # rest of your analyzer logic...
