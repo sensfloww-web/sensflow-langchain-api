@@ -74,39 +74,65 @@ def generate_followup_endpoint(data: dict = Body(...)):
         return {"error": str(e)}
 
 # ---------------- analyze reply ----------------
+from fastapi import Header, HTTPException, status
+from typing import Optional
+import datetime, re
+
+API_KEY = "changeme-please-set-a-secret"  # move to env var in production
+
+def mask_pii(text: str) -> str:
+    text = re.sub(r'[\w\.-]+@[\w\.-]+', '[email]', text)
+    text = re.sub(r'\+?\d[\d\s\-\(\)]{6,}\d', '[phone]', text)
+    return text
+
 @app.post("/analyze-reply")
-def analyze_reply_endpoint(data: dict = Body(...)):
-    """
-    Debugging wrapper for analyze_reply_text that logs the result before returning.
-    Expects: { "reply_text": "..." }
-    """
-    reply_text = data.get("reply_text", "")
+async def analyze_reply_endpoint(
+    data: dict = Body(...),
+    authorization: Optional[str] = Header(None)
+):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing auth")
+    key = authorization.split(" ", 1)[1]
+    if key != API_KEY:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+
+    reply_text = (data.get("reply_text") or "").strip()
     if not reply_text:
-        return {"error": "reply_text required"}
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="reply_text required")
+
     try:
-        result = analyze_reply_text(reply_text)
+        masked = mask_pii(reply_text)
+        result = analyze_reply_text(masked)
 
-        if result is None:
-            print("DEBUG /analyze-reply: analyzer returned None")
-            return {"error": "analyzer returned None"}
-        if not isinstance(result, dict):
-            print("DEBUG /analyze-reply: analyzer returned non-dict:", repr(result))
+        if not result or not isinstance(result, dict):
+            raise Exception("analyzer returned unexpected type")
+
+        intent = result.get("intent") or result.get("action") or "ambiguous"
+        confidence = float(result.get("confidence", 0.0))
+        unsubscribe = bool(result.get("unsubscribe") or False)
+        entities = result.get("entities", {}) or {}
+
+        nf = result.get("next_followup_at")
+        next_followup_at = None
+        if nf:
             try:
-                return dict(result)
+                dt = datetime.datetime.fromisoformat(nf)
+                next_followup_at = dt.isoformat()
             except Exception:
-                return {"error": "analyzer returned unexpected type", "raw": str(result)}
+                next_followup_at = str(nf)
 
-        print("DEBUG /analyze-reply result:", result)
+        if confidence < 0.6:
+            intent = "ambiguous"
 
-        safe_result = {
-            "action": result.get("action", "other"),
-            "reason": result.get("reason", ""),
-            "next_followup_at": result.get("next_followup_at", ""),
-            "unsubscribe": result.get("unsubscribe", "no"),
-            "reply_text": result.get("reply_text", "")
+        return {
+            "intent": intent,
+            "confidence": confidence,
+            "unsubscribe": unsubscribe,
+            "entities": entities,
+            "next_followup_at": next_followup_at or "",
+            "reply_text": reply_text
         }
-        return safe_result
 
     except Exception as e:
-        print("ERROR /analyze-reply exception:", str(e))
-        return {"error": str(e)}
+        print("ERROR /analyze-reply:", str(e))
+        raise HTTPException(status_code=500, detail="internal analyzer error")
