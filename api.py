@@ -136,3 +136,23 @@ async def analyze_reply_endpoint(
     except Exception as e:
         print("ERROR /analyze-reply:", str(e))
         raise HTTPException(status_code=500, detail="internal analyzer error")
+from fastapi.security import HTTPBearer
+from fastapi import Depends
+
+bearer_scheme = HTTPBearer()
+
+@app.post("/analyze-reply")
+async def analyze_reply_endpoint(
+    data: dict = Body(...),
+    credentials: str = Depends(bearer_scheme)
+):
+    # Extract token
+    token = credentials.credentials
+    if token != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    reply_text = (data.get("reply_text") or "").strip()
+    if not reply_text:
+        raise HTTPException(status_code=400, detail="reply_text required")
+
+    # ... same analyzer logic ...
